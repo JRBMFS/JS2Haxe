@@ -1,490 +1,1341 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Jint;
 using Jint.Expressions;
+using System.Xml.Serialization;
+using System.IO;
 
 namespace JS2Haxe
 {
 
     class Program
     {
-
-        //public static Dictionary<String, Member> classes = new Dictionary<string, Member>();
-
+        // the global registry of variables in their own context
+        //static Dictionary<string, Assignment> variables = new Dictionary<string, Assignment>();
+        static int AnoymCounter = 1;
+        static Dictionary<Statement, Member> anonymous = new Dictionary<Statement, Member>();
         static void Main(string[] args)
         {
 
+            Member baseMember = new Member("", null, MemberType.Global);
 
-            System.IO.StreamReader sr = new System.IO.StreamReader(@"c:\code\jquerysocket.js");
+           // System.IO.StreamReader sr = new System.IO.StreamReader(@"c:\code\JS2Haxe\jquery-1.7.1.js");
+            System.IO.StreamReader sr = new System.IO.StreamReader(@"c:\code\JS2Haxe\kendo.all.min.js");
+
             string code = sr.ReadToEnd();
             sr.Close();
 
-            var res = JintEngine.Compile(code, true);
+            Jint.Expressions.Program res = JintEngine.Compile(code, true);
 
-            /*Member baseclass = new Member();
-            MemberSearch result = new MemberSearch();
+            AnoymCounter = 1;
 
-            
+            // first pass, we build a list of all variable declarations without any assignment information
             foreach (Statement statement in res.Statements)
             {
-                result.member = baseclass;
-                HandleStatement(statement, result);
+                HandleDeclarationStatement(statement, baseMember, 0);
             }
 
-            // finally, generate haxe
-            HaxeGenerator gen = new HaxeGenerator(classes);
+            // now that we have our declarations we loop again and gather the assignment hierarchy to see what is assigned to who
+            foreach (Statement statement in res.Statements)
+            {
+               HandleAssignmentStatement(statement, baseMember, 0);
+            }
 
-            gen.Generate();*/
+            // now that we have our code analysis, we rebuild the classes and their datatypes by analysing assignments of variables
+            // note: some objects are assigned the same object so we must merge their method and members declaration (ex: jQuery.fn)
 
+            Consolidator.Consolidate(baseMember);
+
+            XmlSerializer serializer = new XmlSerializer(Consolidator.classes.GetType());
+            TextWriter textWriter = new StreamWriter(@"C:\temp\movie.xml");
+            serializer.Serialize(textWriter, Consolidator.classes);
+            textWriter.Close();
+
+            /*ClassGenerator.Generate(baseMember);
+
+            System.IO.StreamWriter sw = new System.IO.StreamWriter(@"c:\code\tt.txt");
+
+            WriteMember(baseMember, sw, 0);
+            sw.Close();*/
+            /*XmlSerializer serializer = new XmlSerializer(typeof(Member));
+            TextWriter textWriter = new StreamWriter(@"C:\temp\movie.xml");
+            serializer.Serialize(textWriter, baseMember);
+            textWriter.Close();*/
+
+            #region Code
+          
+            /* List<Assignment> vars = new List<Assignment>();
+
+            foreach (var r in variables)
+            {
+                vars.Add(r.Value);
+            }
+
+            XmlSerializer serializer = new XmlSerializer(typeof(List<Assignment>));
+            TextWriter textWriter = new StreamWriter(@"C:\temp\movie.xml");
+            serializer.Serialize(textWriter, vars);
+            textWriter.Close();
+            
+            // now build the class interfaces and deduct types
+            foreach (Statement statement in res.Statements)
+            {
+               // HandleDeclarationStatement(statement);
+            }*/
+            #endregion
+           
+        }
+          #region temp
+        static Dictionary<String, Member> written = new Dictionary<string, Member>();
+        public static void WriteMember(Member member, System.IO.StreamWriter sw, int level, string key = "")
+        {
+            string TAB = "";
+            for (int i = 0; i < level; i++)
+            {
+                TAB += "\t";
+            }
+
+            string extra = "";
+
+            if (member.Type == MemberType.Parameter)
+                extra = "  (parameter) ";
+            else if (member.Type == MemberType.Member)
+                extra = "  (member) ";
+            else if (member.Type == MemberType.Function)
+                extra = "  (function) ";
+            else if (member.Type == MemberType.Method)
+                extra = "  (Method) ";
+            else if (member.Type == MemberType.Value)
+                extra = "  (type: " + member.DataType.ToString() + ") ";
+            else if (member.Type == MemberType.Regex)
+                extra = "  (regex: " + member.BasicData.ToString() + ") ";
+            else if (member.Type == MemberType.Property)
+                extra = "  (property) ";
+            else if (member.Type == MemberType.Array)
+                extra = "  (array) ";
+
+            if (written.ContainsKey(member.FullName))
+                extra += "(reference) ";
+
+            sw.WriteLine(TAB + member.FullNameReal + extra  + key);
+
+            if (!written.ContainsKey(member.FullName))
+            {
+
+                written.Add(member.FullName, member);
+
+                if(member.Constructor != null)
+                    sw.WriteLine(TAB + "\t" + member.Constructor.Name + " (constructor)");
+
+                if (member.Body.Count > 0)
+                sw.WriteLine(TAB + "<<body values>>");
+                foreach (var mem in member.Body.Values)
+                {
+                    WriteMember(mem, sw, level + 1);
+                }
+
+                if (member.Parameters.Count > 0)
+                sw.WriteLine(TAB + "<<parameters>>");
+                foreach (var mem in member.Parameters.Values)
+                {
+                    WriteMember(mem, sw, level + 1);
+                }
+
+                if (member.Members.Count > 0)
+                sw.WriteLine(TAB + "<<class members>>");
+                foreach (var mem in member.Members.Values)
+                {
+                    WriteMember(mem, sw, level + 1);
+                }
+
+                if (member.ReturnMembers.Count > 0)
+                    sw.WriteLine(TAB + "<<return values>>");
+                foreach (var mem in member.ReturnMembers.Values)
+                {
+                    WriteMember(mem, sw, level + 1, " (return value)");
+                }
+
+                if (member.Assignments.Count > 0)
+                sw.WriteLine(TAB + "<<assignments>>");
+                foreach (var mem in member.Assignments.Values)
+                {
+                    WriteMember(mem, sw, level + 1, " (assignment to " + member.FullNameReal + ")");
+                }
+
+                
+            }
 
         }
+          #endregion
 
-       /* private static MemberSearch HandleStatement(Statement statement, MemberSearch currentclass)
+        #region Declarations
+
+
+        private static void HandleDeclarationStatement(Statement statement, Member member, int debug)
         {
-            if (statement is VariableDeclarationStatement)
+            if (statement is Expression)
             {
-                var vardecstat = (VariableDeclarationStatement)statement;
-
-                Member newclass = null;
-
-                if (currentclass.member != null)
-                    newclass = currentclass.member.FindMember(vardecstat.Identifier);
-
-                if (newclass == null)
-                {
-                    newclass = new Member();
-                    newclass.objectype = Member.MemberType.Field;
-                    newclass.name = vardecstat.Identifier;
-                    newclass.Namespace = currentclass.member.fullname;
-                    newclass.parent = currentclass.member;
-                    MakeFullname(currentclass.member, newclass);
-
-                    if ((currentclass.member.objectype == Member.MemberType.Method || currentclass.member.objectype == Member.MemberType.None) && currentclass.member.name == "")
-                    {
-                        if (!classes.ContainsKey(vardecstat.Identifier))
-                            classes.Add(vardecstat.Identifier, newclass);
-                    }
-
-                    currentclass.member.addMember(newclass);  
-                }
-
-                currentclass.member = newclass;
-
-                // ignore empty expression declarations, not really useful to us
-                if (vardecstat.Expression != null)
-                {
-                    HandleExpression(vardecstat.Expression, currentclass);
-
-                }
+                // its an expression, so lets treat is as should be
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleDeclarationExpression((Expression)statement, member, context, debug + 1);
             }
             else if (statement is ExpressionStatement)
             {
-                var exstat = (ExpressionStatement)statement;
+                ExpressionStatement stat = (ExpressionStatement)statement;
 
-                return  HandleExpression(exstat.Expression, currentclass);
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleDeclarationExpression(stat.Expression, member, context, debug + 1);
             }
-            else if (statement is CommaOperatorStatement)
+            else if (statement is IfStatement)
             {
-                var comstat = (CommaOperatorStatement)statement;
+                IfStatement stat = (IfStatement)statement;
 
-                foreach (Statement newstatement in comstat.Statements)
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleDeclarationExpression(stat.Expression, member, context, debug + 1);
+
+                HandleDeclarationStatement(stat.Then, member, debug + 1);
+
+                HandleDeclarationStatement(stat.Else, member, debug + 1);
+            }
+            else if (statement is VariableDeclarationStatement)
+            {
+                VariableDeclarationStatement stat = (VariableDeclarationStatement)statement;
+
+                Member newMember = member.FindMember(stat.Identifier);
+
+                if (newMember == null)
                 {
-                    HandleStatement(newstatement, currentclass.Copy());
+                    newMember = new Member(stat.Identifier, member, MemberType.Member);
+                    member.AddToFunctionBody(newMember);
                 }
-                //return HandleExpression(exstat.Expression, currentclass);
+
+                Context context = new Context() { Member = newMember };
+                ExpressionResult res = HandleDeclarationExpression(stat.Expression, member, context, debug + 1);
+
+                if (res.Members.Count == 1 && res.SingleMember.Type == MemberType.AnonymousFunction)
+                {
+                    // its a function we are assigning, so lets make it the constructor
+                    newMember.Constructor = res.SingleMember;
+                }
+            }
+            else if (statement is ForEachInStatement)
+            {
+                ForEachInStatement stat = (ForEachInStatement)statement;
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleDeclarationExpression(stat.Expression, member, context, debug + 1);
+
+                HandleDeclarationStatement(stat.InitialisationStatement, member, debug + 1);
+
+                HandleDeclarationStatement(stat.Statement, member, debug + 1);
+
+            }
+            else if (statement is SwitchStatement)
+            {
+                SwitchStatement stat = (SwitchStatement)statement;
+
+                //TODO
+
+            }
+            else if (statement is WhileStatement)
+            {
+                WhileStatement stat = (WhileStatement)statement;
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleDeclarationExpression(stat.Condition, member, context, debug + 1);
+
+                HandleDeclarationStatement(stat.Statement, member, debug + 1);
+
+            }
+            else if (statement is ForStatement)
+            {
+                ForStatement stat = (ForStatement)statement;
+
+                HandleDeclarationStatement(stat.InitialisationStatement, member, debug + 1);
+                HandleDeclarationStatement(stat.ConditionExpression, member, debug + 1);
+
+                HandleDeclarationStatement(stat.IncrementExpression, member, debug + 1);
+
+                HandleDeclarationStatement(stat.Statement, member, debug + 1);
+
+            }
+            else if (statement is WithStatement)
+            {
+                WithStatement stat = (WithStatement)statement;
+
+                HandleDeclarationStatement(stat.Statement, member, debug + 1);
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleDeclarationExpression(stat.Expression, member, context, debug + 1);
+            }
+            else if (statement is ContinueStatement)
+            {
+
+            }
+            else if (statement is FunctionDeclarationStatement)
+            {
+                FunctionDeclarationStatement stat = (FunctionDeclarationStatement)statement;
+
+                if (stat.Name != null)
+                {
+
+                    // first create the function variable
+
+                    Member functionMember = new Member(stat.Name, member, MemberType.Function);
+                    member.AddToFunctionBody(functionMember);
+
+                    int index = 0;
+                    foreach (var para in stat.Parameters)
+                    {
+                        // the function has parameters, lets add them as variables
+                        Member paramMember = new Member(para, functionMember, MemberType.Parameter);
+
+                        if (functionMember.Parameters.ContainsKey(paramMember.FullName))
+                        {
+                            paramMember.Name += (index).ToString();
+                        }
+                        functionMember.Parameters.Add(paramMember.FullName, paramMember);
+
+                        // add the index
+                        functionMember.ParametersIndex.Add(index++, paramMember.FullName);
+                    }
+
+                    HandleDeclarationStatement(stat.Statement, functionMember, debug + 1);
+                }
+                else
+                    throw new InvalidOperationException();
+
+            }
+            else if (statement is ThrowStatement)
+            {
+
+            }
+            else if (statement is DoWhileStatement)
+            {
+                DoWhileStatement stat = (DoWhileStatement)statement;
+
+                HandleDeclarationStatement(stat.Statement, member, debug + 1);
+
+            }
+            else if (statement is TryStatement)
+            {
+
+            }
+            else if (statement is BlockStatement)
+            {
+                BlockStatement stat = (BlockStatement)statement;
+
+                foreach (var substatement in stat.Statements)
+                {
+                    HandleDeclarationStatement(substatement, member, debug + 1);
+                }
+
+            }
+            else if (statement is EmptyStatement)
+            {
+
+            }
+            else if (statement is BreakStatement)
+            {
+
             }
             else if (statement is ReturnStatement)
             {
-                var retstate = (ReturnStatement)statement;
+                ReturnStatement stat = (ReturnStatement)statement;
 
-                // we have a return statement, so mark the method as NON void. later we could try to determine method type by return type...
-                //TODO: determin method return type
-
-                Member method = currentclass.member.FindMethod(currentclass.wantedMemebrName);
-
-                if (method != null)
-                    method.datatype = "Dynamic";
-
-                return HandleExpression(retstate.Expression, currentclass);
-            }
-            else
-            {
-                int i = 0;
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleDeclarationExpression(stat.Expression, member, context, debug + 1);
             }
 
-            return new MemberSearch();
         }
 
-        private static MemberSearch HandleExpression(Expression expression, MemberSearch currentclass)
+        private static ExpressionResult HandleDeclarationExpression(Expression expression, Member member, Context context, int debug)
         {
-            MemberSearch memberResult = new MemberSearch();
+            ExpressionResult res = new ExpressionResult();
+
             if (expression is MemberExpression)
             {
-                // this is an expression that we perform on a member
-                var memexpr = (MemberExpression)expression;
+                MemberExpression ex = (MemberExpression)expression;
 
-                if (!(memexpr.Previous is FunctionExpression))
+                ExpressionResult res2 = new ExpressionResult();
+                ExpressionResult res3 = new ExpressionResult();
+
+                if (ex.Previous != null)
                 {
-                    if (memexpr.Member is MethodCall)
+                    
+
+                    res2 = HandleDeclarationExpression(ex.Previous, member, context, debug + 1);
+
+                    Context subcontext = new Context() { Member = null };
+
+                    if (res2.Members.Count != 0)
                     {
-                        memberResult = HandleExpression(memexpr.Previous, currentclass);
+                        subcontext.Member = res2.SingleMember;
 
-                        // this is a function call, we do nothing with it, but we could lookup for data type...
-                        //TODO: find method and try to determine datatype
+                        if (subcontext.Member == null)
+                            subcontext.Member = member;
+                        subcontext.AllowMemberCreation = true;
                     }
-                    else if (memexpr.Member is PropertyExpression && !(memexpr.Previous is ArrayDeclaration))
-                    {
-                        SearchInfo result = new SearchInfo();
-                        if (((PropertyExpression)memexpr.Member).Text == "prototype")
-                        {
-                            // we have a prototype, so we go one up
-                            if (memexpr.Previous is Identifier)
-                                result = GetMember(((Identifier)memexpr.Previous), currentclass.member);
-                            else if (memexpr.Previous is MemberExpression)
-                                result = GetMember(((MemberExpression)memexpr.Previous).Previous, currentclass.member);
-                        }
-                        else
-                            result = GetMember(memexpr.Previous, currentclass.member);
 
-                        memberResult.isthis = result.isthis;
-                        memberResult.isprototype = result.isprototype;
-                        memberResult.parent = result.foundclass;
-                        memberResult.wanteParentName = result.searchedName;
-                        memberResult.wantedMemebrName = ((PropertyExpression)memexpr.Member).Text;
-                        if (((PropertyExpression)memexpr.Member).Text == "prototype")
-                        {
-                            if (memexpr.Previous is Identifier)
-                                memberResult.wantedMemebrName = ((Identifier)memexpr.Previous).Text;
-                            else if (memexpr.Previous is MemberExpression)
-                                memberResult.wantedMemebrName = ((PropertyExpression)((MemberExpression)memexpr.Previous).Member).Text;
-                            if (memberResult.parent != null)
-                                memberResult.member = memberResult.parent.FindMember(memberResult.wantedMemebrName);
+                    res3 = HandleDeclarationExpression(ex.Member, member, subcontext, debug + 1);
+                }
+                else
+                    res3 = HandleDeclarationExpression(ex.Member, member, context, debug + 1);
 
-                        }
-                        else if (memberResult.parent != null)
-                            memberResult = HandleExpression(memexpr.Member, memberResult);
-                    }
+                if (res3.IsPrototype)
+                {
+                    res.IsPrototype = true;
+                    res.AddMembers(res2.Members);
                 }
                 else
                 {
-                    memberResult = HandleExpression(memexpr.Previous, currentclass);
+                    // add the resulting members
+                    res.AddMembers(res3.Members);
                 }
+            }
+            else if (expression is ArrayDeclaration)
+            {
+                ArrayDeclaration ex = (ArrayDeclaration)expression;
+
+                Member arraymember = new Member("Array" + (AnoymCounter++).ToString(), member, MemberType.Array);
+                if (!anonymous.ContainsKey(ex))
+                    anonymous.Add(ex, arraymember);
+
+                foreach (var item in ex.Parameters)
+                {
+                    if (item is Expression)
+                    {
+                        ExpressionResult res3 = HandleDeclarationExpression((Expression)item, member, context, debug + 1);
+                    }
+                    else
+                        throw new InvalidOperationException();
+                    //HandleDeclarationStatement(item, arraymember, debug + 1);
+                }
+
+                res.Members.Add(arraymember);
             }
             else if (expression is MethodCall)
             {
-                // we dont do much with method calls, but we could try to figure out data type
-                // so we will, we find the method
-                memberResult = currentclass;
-                memberResult.wantedMemebrName = ((MethodCall)expression).Label;
-                memberResult.member = currentclass.parent.FindMethod(memberResult.wantedMemebrName);
+                MethodCall ex = (MethodCall)expression;
+
+                foreach (var arg in ex.Arguments)
+                {
+                    ExpressionResult res2 = HandleDeclarationExpression(arg, member, context, debug + 1);
+                }
             }
-            else if (expression is PropertyExpression)
+            else if (expression is CommaOperatorStatement)
             {
-                // we dont do much with method calls, but we could try to figure out data type
-                // so we will, we find the method
+                CommaOperatorStatement ex = (CommaOperatorStatement)expression;
 
-                memberResult = currentclass;
-                memberResult.wantedMemebrName = ((PropertyExpression)expression).Text;
-                memberResult.member = currentclass.parent.FindField(memberResult.wantedMemebrName);
-            }
-            else if (expression is Identifier)
-            {
-                // we dont do much with method calls, but we could try to figure out data type
-                // so we will, we find the method
-                Identifier id = expression as Identifier;
-
-                Member foundMember = null;
-
-                if( currentclass.parent != null)
-                    foundMember = currentclass.parent.FindMember(id.Text);
-                else
-                    foundMember = currentclass.member.FindMember(id.Text);
-
-                memberResult = currentclass;
-                memberResult.member = foundMember;
+                foreach (var substatement in ex.Statements)
+                {
+                    HandleDeclarationStatement(substatement, member, debug + 1);
+                }
             }
             else if (expression is AssignmentExpression)
             {
-                var assignex = (AssignmentExpression)expression;
+                AssignmentExpression ex = (AssignmentExpression)expression;
+                ExpressionResult res2 = HandleDeclarationExpression(ex.Left, member, context, debug + 1);
 
-                memberResult = HandleExpression(assignex.Left, currentclass);
-
-                if (memberResult == null || memberResult.parent == null)
-                    return null;
-
-                Member left = memberResult.member;
-
-                if (memberResult.isprototype) {
-                    // we have a prototype, so this is a class
-                    memberResult.parent.changeMethodIntoClass();
-                }
-
-                if (left == null)
+                Context subcontext = new Context() { Member = member };
+                if (res2.IsPrototype)
                 {
-                    Member newmember = new Member();
-                    newmember.parent = memberResult.parent;
-                    newmember.name = memberResult.wantedMemebrName;
-                    newmember.Namespace = memberResult.parent.fullname;
-
-                    MakeFullname(memberResult.parent, newmember);
-
-                    memberResult.member = newmember;
-                    memberResult.mustCreateMember = true;
-
-                    memberResult.parent.addMember(newmember);
+                    subcontext.IsPrototype = true;
+                    subcontext.Member = res2.SingleMember;
                 }
 
-                HandleExpression(assignex.Right, memberResult);
+                ExpressionResult res3 = HandleDeclarationExpression(ex.Right, member, subcontext, debug + 1);
+
+                if (res3.IsFunctionDecl && res2.SingleMember != null)
+                {
+                    // since it was assigned a function, we can set its type to a function
+                    res2.SingleMember.Type = MemberType.Method;
+                }
+
+                res.AddMembers(res2.Members);
             }
+            else if (expression is ClrIdentifier)
+            {
+                ClrIdentifier ex = (ClrIdentifier)expression;
+
+            }
+            else if (expression is NewExpression)
+            {
+                NewExpression ex = (NewExpression)expression;
+
+                ExpressionResult res3 = HandleDeclarationExpression(ex.Expression, member, context, debug + 1);
+
+                foreach (var arg in ex.Arguments)
+                {
+                    ExpressionResult res2 = HandleDeclarationExpression(arg, member, context, debug + 1);
+                }
+            }
+
             else if (expression is TernaryExpression)
             {
-                // do nothing really...
-                currentclass.member.objectype = Member.MemberType.Field;
+                TernaryExpression ex = (TernaryExpression)expression;
+
+                // these are assignments to lets add it to current context variable
+
+                // lets parse this part in case it has important code
+                ExpressionResult res2 = HandleDeclarationExpression(ex.LeftExpression, member, context, debug + 1);
+
+                ExpressionResult res3 = HandleDeclarationExpression(ex.MiddleExpression, member, context, debug + 1);
+
+                ExpressionResult res4 = HandleDeclarationExpression(ex.RightExpression, member, context, debug + 1);
             }
-            else if (expression is FunctionExpression)
+            else if (expression is BinaryExpression)
             {
-                FunctionExpression funcex = expression as FunctionExpression;
+                BinaryExpression ex = (BinaryExpression)expression;
 
+                // these are assignments to lets add it to current context variable
+                ExpressionResult res2 = HandleDeclarationExpression(ex.LeftExpression, member, context, debug + 1);
 
-                 currentclass.member.objectype = Member.MemberType.Method;
-                 currentclass.member.methodtype = Member.MethodType.Dynamic;
-
-                // its a prototype method
-                 if (currentclass.isprototype)
-                     currentclass.member.methodtype = Member.MethodType.Prototype;
-
-                 currentclass.member.functionParameters.Add(funcex.Parameters.ToList());
-
-                 if (funcex.Statement is BlockStatement)
-                 {
-                     BlockStatement block = funcex.Statement as BlockStatement;
-
-                     foreach (var statement in block.Statements)
-                     {
-                         MemberSearch statementresult = HandleStatement(statement, currentclass.Copy());
-
-                         if (statementresult != null && statementresult.isthis)
-                         {
-                             // we modified ourselves, so this is not a function but a class, so we change it
-                             statementresult.parent.changeMethodIntoClass();
-                         }
-                     }
-                 }
-            }
-            else if (expression is JsonExpression)
-            {
-                // here we declare members via prototype form
-                JsonExpression json = expression as JsonExpression;
-                currentclass.member.changeMethodIntoClass();
-                foreach (var entry in json.Values.Values)
-                {
-                    HandleExpression(entry, currentclass);
-                }
+                ExpressionResult res3 = HandleDeclarationExpression(ex.RightExpression, member, context, debug + 1);
             }
             else if (expression is PropertyDeclarationExpression)
             {
-                var assignex = (PropertyDeclarationExpression)expression;
+                PropertyDeclarationExpression ex = (PropertyDeclarationExpression)expression;
 
-                if (assignex.Name == "constructor")
+                if (ex.Mode == PropertyExpressionType.Data)
                 {
-                    MemberSearch search = HandleExpression(assignex.Expression, currentclass.Copy());
 
-                    if (search.member != null)
-                    {
-                        if (search.member.objectype == Member.MemberType.Class)
-                        {
-                            currentclass.member.CopyConstructors(search.member);
-                        }
-                    }
+                    ExpressionResult res2 = HandleDeclarationExpression(ex.Expression, member, context, debug + 1);
+
+                    res.IsFunctionDecl = res2.IsFunctionDecl;
+
+                    res.AddMembers(res2.Members);
+                    
                 }
                 else
                 {
-                    Member foundmethod = currentclass.member.FindMember(assignex.Name);
+                    throw new InvalidOperationException("get/set not yet implemented");
+                }
+                // TODO get set
 
-                    if(foundmethod == null)
+                /*ExpressionResult res3 = HandleDeclarationExpression(ex.GetExpression, member);
+
+                ExpressionResult res4 = HandleDeclarationExpression(ex.SetExpression, member);*/
+
+            }
+            else if (expression is FunctionExpression)
+            {
+                FunctionExpression ex = (FunctionExpression)expression;
+
+                if (anonymous.ContainsKey(ex))
+                {
+                    res.Members.Add(anonymous[ex]);
+                    res.IsFunctionDecl = true;
+                }
+                else
+                {
+                    Member functionMember = new Member(ex.Name, member, MemberType.Function);
+
+                    if (functionMember.Name == null)
                     {
-                        currentclass.member.changeMethodIntoClass();
-                        Member newmember = new Member();
-                        newmember.parent = currentclass.member;
-                        newmember.name = assignex.Name;
-                        newmember.Namespace = newmember.parent.fullname;
+                        functionMember.Name = "Anonym" + (AnoymCounter++).ToString();
+                        functionMember.Type = MemberType.AnonymousFunction;
+                        anonymous.Add(ex, functionMember);
+                    }
 
-                        MakeFullname(newmember.parent, newmember);
+                    member.AddToFunctionBody(functionMember);
 
-                        memberResult.isprototype = true;
-                        memberResult.parent = newmember.parent;
-                        memberResult.member = newmember;
-                        memberResult.mustCreateMember = true;
+                    int index = 0;
+                    foreach (var para in ex.Parameters)
+                    {
+                        // the function has parameters, lets add them as variables
+                        Member paramMember = new Member(para, functionMember, MemberType.Parameter);
 
-                        newmember.parent.addMember(newmember);
+                        if (functionMember.Parameters.ContainsKey(paramMember.FullName))
+                        {
+                            paramMember.Name += (index).ToString();
+                        }
 
-                        HandleExpression(assignex.Expression, memberResult);
+                        functionMember.Parameters.Add(paramMember.FullName, paramMember);
+                        // add the index
+                        functionMember.ParametersIndex.Add(index++, paramMember.FullName);
+                    }
+
+                    HandleDeclarationStatement(ex.Statement, functionMember, debug + 1);
+
+                    res.Members.Add(functionMember);
+                    res.IsFunctionDecl = true;
+                }
+            }
+            else if (expression is Indexer)
+            {
+                Indexer ex = (Indexer)expression;
+
+                ExpressionResult res2 = HandleDeclarationExpression(ex.Index, member, context, debug + 1);
+            }
+            else if (expression is UnaryExpression)
+            {
+                UnaryExpression ex = (UnaryExpression)expression;
+
+                ExpressionResult res2 = HandleDeclarationExpression(ex.Expression, member, context, debug + 1);
+
+                res.AddMembers(res2.Members);
+            }
+            else if (expression is Identifier)
+            {
+                Identifier ex = (Identifier)expression;
+
+                if (ex.Text == "null")
+                {
+                    // its a null type
+                    Member basicmember = new Member((AnoymCounter++).ToString(), member, MemberType.Value) { DataType = DataType.Null };
+                    basicmember.BasicData = null;
+
+                    res.Members.Add(basicmember);
+                }
+                else if (ex.Text == "prototype")
+                {
+                    res.IsPrototype = true;
+
+                    res.Members.Add(context.Member);
+                }
+                else
+                {
+                    if (context.Member != null)
+                    {
+                        Member temp = context.Member.FindMember(ex.Text);
+
+                        if (temp != null)
+                        {
+                            res.Members.Add(temp);
+                        }
+                        else if(context.AllowMemberCreation)
+                        {
+                            // we create a new member
+                            Member newMember = new Member(ex.Text, context.Member, MemberType.Member);
+                            context.Member.AddToClassMembers(newMember);
+
+                            res.Members.Add(newMember);
+                        }
                     }
                 }
+
+            }
+            else if (expression is PropertyExpression)
+            {
+                PropertyExpression ex = (PropertyExpression)expression;
+            }
+            else if (expression is JsonExpression)
+            {
+                JsonExpression ex = (JsonExpression)expression;
+
+                // create a new anonymous class member. if its a prototype, we do a trick and swap with the assigned member
+                Member jsonMember = null;
+                if (context.IsPrototype)
+                    jsonMember = context.Member;
+                else
+                {
+                    if (anonymous.ContainsKey(ex))
+                    {
+                        res.Members.Add(anonymous[ex]);
+                        return res;
+                    }
+                    jsonMember = new Member("Json" + (AnoymCounter++).ToString(), member, MemberType.Class);
+                    anonymous.Add(ex, jsonMember);
+                }
+
+                if (ex.Values.Count == 0)
+                {
+                    // an empty json body, do nothing
+                }
+                else
+                {
+                    foreach (var value in ex.Values)
+                    {
+                        if (value.Key == "constructor")
+                        {
+                            // special case, its a constructor
+                            ExpressionResult res2 = HandleDeclarationExpression(value.Value, member, context, debug + 1);
+
+                            if (res2.SingleMember != null)
+                            {
+                                if (res2.SingleMember.Constructor != null)
+                                    jsonMember.Constructor = res2.SingleMember.Constructor;
+                                else
+                                    jsonMember.Constructor = res2.SingleMember;
+                            }
+                        }
+                        else
+                        {
+                            ExpressionResult res2 = HandleDeclarationExpression(value.Value, member, context, debug + 1);
+
+                            if (res2.Members.Count == 0)
+                            {
+                                // add a new empty member
+                                Member classmember = new Member(value.Key, member, MemberType.Member);
+                                jsonMember.AddToClassMembers(classmember);
+                            }
+                            else
+                            {
+                                // it must have been added to a parent, remove it so we can read it with this name
+
+                                /*if (res2.SingleMember.Type == MemberType.AnonymousFunction)
+                                    res2.SingleMember.Parent.Remove(res2.SingleMember);*/
+
+
+                                res2.SingleMember.OverrideName = value.Key;
+                                jsonMember.AddToClassMembers(res2.SingleMember);
+                            }
+                        }
+                    }
+                }
+
+                res.Members.Add(jsonMember);
+            }
+            else if (expression is RegexpExpression)
+            {
+                RegexpExpression ex = (RegexpExpression)expression;
+
+                Member regexmember = new Member((AnoymCounter++).ToString(), member, MemberType.Regex);
+                regexmember.BasicData = ex.Regexp;
+                res.Members.Add(regexmember);
 
             }
             else if (expression is ValueExpression)
             {
-                currentclass.member.objectype = Member.MemberType.Field;
+                ValueExpression ex = (ValueExpression)expression;
+                Member basicmember = new Member((AnoymCounter++).ToString(), member, MemberType.Value);
+                basicmember.BasicData = ex.Value;
 
-                ValueExpression value = expression as ValueExpression;
-                string type = "";
-                // try to guess the type of a member
-                switch (value.TypeCode)
+                switch (ex.TypeCode)
                 {
                     case TypeCode.Double:
-                        type = "Float";
+                        basicmember.DataType = DataType.Float;
                         break;
                     case TypeCode.String:
-                        type = "String";
+                        basicmember.DataType = DataType.String;
                         break;
                     case TypeCode.Boolean:
-                        type = "Bool";
+                        basicmember.DataType = DataType.Bool;
                         break;
                     case TypeCode.Byte:
-                        type = "Int";
+                        basicmember.DataType = DataType.Int;
                         break;
                     case TypeCode.Char:
-                        type = "String";
+                        basicmember.DataType = DataType.String;
                         break;
                     case TypeCode.DateTime:
-                        type = "Date";
+                        basicmember.DataType = DataType.Date;
                         break;
                     case TypeCode.Decimal:
-                        type = "Float";
+                        basicmember.DataType = DataType.Float;
                         break;
                     case TypeCode.Int16:
-                        type = "Int";
+                        basicmember.DataType = DataType.Int;
                         break;
                     case TypeCode.Int32:
-                        type = "Int";
+                        basicmember.DataType = DataType.Int;
                         break;
                     case TypeCode.Int64:
-                        type = "Int";
+                        basicmember.DataType = DataType.Int;
                         break;
                     case TypeCode.Single:
-                        type = "Float";
+                        basicmember.DataType = DataType.Float;
                         break;
- 
+                    default:
+                        throw new InvalidOperationException();
                 }
 
-                if (type != "")
-                    currentclass.member.datatype = type;
+                res.Members.Add(basicmember);
+
+            }
+            else if (expression == null)
+            {
+                // do nothing
             }
             else
             {
-                return null;
+                // not found, lets try to handle it as a statement
+                HandleDeclarationStatement(expression, member, debug + 1);
             }
 
-            return memberResult;
+            return res;
         }
+        #endregion
 
-        public static SearchInfo GetMember(Expression ex, Member currentclass)
+        #region assignements
+        private static void HandleAssignmentStatement(Statement statement, Member member, int debug)
         {
-            SearchInfo info = new SearchInfo();
-
-            if (!(ex is MemberExpression || ex is Identifier))
-                return info;
-
-            string name = "";
-            // get the full name by going through name hierarchy
-            List<String> values = new List<string>();
-            while (!(ex is Identifier))
+            if (statement is Expression)
             {
-                if (!(ex is MemberExpression || ex is Identifier))
-                    return info;
+                // its an expression, so lets treat is as should be
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression((Expression)statement, member, context, debug + 1);
+            }
+            else if (statement is ExpressionStatement)
+            {
+                ExpressionStatement stat = (ExpressionStatement)statement;
 
-                if(!(((MemberExpression)ex).Member is PropertyExpression))
-                    return info;
-                string label = ((PropertyExpression)((MemberExpression)ex).Member).Text;
-                if (label != "prototype")
-                    values.Add(label);
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression(stat.Expression, member, context, debug + 1);
+            }
+            else if (statement is IfStatement)
+            {
+                IfStatement stat = (IfStatement)statement;
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression(stat.Expression, member, context, debug + 1);
+
+                HandleAssignmentStatement(stat.Then, member, debug + 1);
+
+                HandleAssignmentStatement(stat.Else, member, debug + 1);
+            }
+            else if (statement is VariableDeclarationStatement)
+            {
+                VariableDeclarationStatement stat = (VariableDeclarationStatement)statement;
+
+                Member newMember = member.FindMember(stat.Identifier);
+
+                if (newMember == null)
+                {
+                    throw new InvalidOperationException("member not found: " + stat.Identifier);
+                }
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression(stat.Expression, member, context, debug + 1);
+
+                if (res.Members.Count == 1 && res.SingleMember.Type == MemberType.AnonymousFunction)
+                {
+                    // its a function we are assigning, so lets make it the constructor
+                    newMember.Constructor = res.SingleMember;
+                }
                 else
-                    info.isprototype = true;
-
-                ex = ((MemberExpression)ex).Previous;
+                    newMember.AddAssignments(res.Members);
             }
-
-            name = ((Identifier)ex).Text;
-
-            if (name == "this")
+            else if (statement is ForEachInStatement)
             {
-                info.isthis = true;
-                info.foundclass = currentclass;
+                ForEachInStatement stat = (ForEachInStatement)statement;
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression(stat.Expression, member, context, debug + 1);
+
+                HandleAssignmentStatement(stat.InitialisationStatement, member, debug + 1);
+
+                HandleAssignmentStatement(stat.Statement, member, debug + 1);
+
             }
-            else
+            else if (statement is SwitchStatement)
+            {
+                SwitchStatement stat = (SwitchStatement)statement;
+
+                //TODO
+
+            }
+            else if (statement is WhileStatement)
+            {
+                WhileStatement stat = (WhileStatement)statement;
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression(stat.Condition, member, context, debug + 1);
+
+                HandleAssignmentStatement(stat.Statement, member, debug + 1);
+
+            }
+            else if (statement is ForStatement)
+            {
+                ForStatement stat = (ForStatement)statement;
+
+                HandleAssignmentStatement(stat.InitialisationStatement, member, debug + 1);
+                HandleAssignmentStatement(stat.ConditionExpression, member, debug + 1);
+
+                HandleAssignmentStatement(stat.IncrementExpression, member, debug + 1);
+
+                HandleAssignmentStatement(stat.Statement, member, debug + 1);
+
+            }
+            else if (statement is WithStatement)
+            {
+                WithStatement stat = (WithStatement)statement;
+
+                HandleAssignmentStatement(stat.Statement, member, debug + 1);
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression(stat.Expression, member, context, debug + 1);
+            }
+            else if (statement is ContinueStatement)
             {
 
-                values.Add(name);
-                values.Reverse();
+            }
+            else if (statement is FunctionDeclarationStatement)
+            {
+                FunctionDeclarationStatement stat = (FunctionDeclarationStatement)statement;
 
-                string searchname = string.Join(".", values.ToArray());
-                info.searchedName = searchname;
+                if (stat.Name != null)
+                {
+                    Member funcMember = member.FindMember(stat.Name);
+                    HandleAssignmentStatement(stat.Statement, funcMember, debug + 1);
+                }
+            }
+            else if (statement is ThrowStatement)
+            {
 
-                if (classes.ContainsKey(searchname))
-                    info.foundclass = classes[searchname];
+            }
+            else if (statement is DoWhileStatement)
+            {
+                DoWhileStatement stat = (DoWhileStatement)statement;
+
+                HandleAssignmentStatement(stat.Statement, member, debug + 1);
+
+            }
+            else if (statement is TryStatement)
+            {
+
+            }
+            else if (statement is BlockStatement)
+            {
+                BlockStatement stat = (BlockStatement)statement;
+
+                foreach (var substatement in stat.Statements)
+                {
+                    HandleAssignmentStatement(substatement, member, debug + 1);
+                }
+
+            }
+            else if (statement is EmptyStatement)
+            {
+
+            }
+            else if (statement is BreakStatement)
+            {
+
+            }
+            else if (statement is ReturnStatement)
+            {
+                ReturnStatement stat = (ReturnStatement)statement;
+
+                Context context = new Context() { Member = member };
+                ExpressionResult res = HandleAssignmentExpression(stat.Expression, member, context, debug + 1);
+
+                member.AddReturnMembers(res.Members);
+
             }
 
-            return info;
         }
 
-        public static CurrentInfo GetInfo(Expression ex, Member currentclass)
+        private static ExpressionResult HandleAssignmentExpression(Expression expression, Member member, Context context, int debug)
         {
+            ExpressionResult res = new ExpressionResult();
 
-            CurrentInfo info = new CurrentInfo();
-            string name = "";
-            // get the full name by going through name hierarchy
-            List<String> values = new List<string>();
-            int i = 0;
-            bool prototypefirst = false;
-            while(!(ex is Identifier)){
-                string label = ((PropertyExpression)((MemberExpression)ex).Member).Text;
-                if (label != "prototype")
-                    values.Add(label);
+            if (expression is MemberExpression)
+            {
+                MemberExpression ex = (MemberExpression)expression;
+
+                ExpressionResult res2 = new ExpressionResult();
+                ExpressionResult res3 = new ExpressionResult();
+
+                if (ex.Previous != null)
+                {
+
+
+                    res2 = HandleAssignmentExpression(ex.Previous, member, context, debug + 1);
+
+                    Context subcontext = new Context() { Member = null };
+
+                    if (res2.Members.Count != 0)
+                    {
+                        subcontext.Member = res2.SingleMember;
+
+                        if (subcontext.Member == null)
+                            subcontext.Member = member;
+                        subcontext.AllowMemberCreation = true;
+                    }
+
+                    res3 = HandleDeclarationExpression(ex.Member, member, subcontext, debug + 1);
+                }
+                else
+                    res3 = HandleAssignmentExpression(ex.Member, member, context, debug + 1);
+
+                if (res3.IsPrototype)
+                {
+                    res.IsPrototype = true;
+                    res.AddMembers(res2.Members);
+                }
                 else
                 {
-                    info.isprototype = true;
-                    if (i == 0)
-                        prototypefirst = true;
+                    // add the resulting members
+                    res.AddMembers(res3.Members);
+                }
+            }
+            else if (expression is ArrayDeclaration)
+            {
+                ArrayDeclaration ex = (ArrayDeclaration)expression;
+
+                // required to keep nonym counter in synch
+
+                foreach (var item in ex.Parameters)
+                {
+                    if (item is Expression)
+                    {
+                        ExpressionResult res3 = HandleDeclarationExpression((Expression)item, member, context, debug + 1);
+                    }
+                    else
+                        throw new InvalidOperationException();
+                    //HandleDeclarationStatement(item, arraymember, debug + 1);
+                }
+            }
+            else if (expression is MethodCall)
+            {
+                MethodCall ex = (MethodCall)expression;
+
+                Member activeMember = context.Member;
+                if (context.Member.Type == MemberType.Method || context.Member.Type == MemberType.AnonymousFunction || context.Member.Type == MemberType.Function)
+                {
+                    activeMember = context.Member;
+                }
+                else if (context.Member.Constructor != null)
+                {
+                    activeMember = context.Member.Constructor;
                 }
 
-                ex = ((MemberExpression)ex).Previous;
-                i++;
+                int index = 0;
+                foreach (var arg in ex.Arguments)
+                {
+                    ExpressionResult res2 = HandleDeclarationExpression(arg, member, context, debug + 1);
+
+                    string name = activeMember.ParametersIndex[index];
+                    activeMember.Parameters[name].AddAssignments(res2.Members);
+                    index++;
+                }
+                res.Members.Add(context.Member);
+            }
+            else if (expression is CommaOperatorStatement)
+            {
+                CommaOperatorStatement ex = (CommaOperatorStatement)expression;
+
+                foreach (var substatement in ex.Statements)
+                {
+                    HandleAssignmentStatement(substatement, member, debug + 1);
+                }
+            }
+            else if (expression is AssignmentExpression)
+            {
+                AssignmentExpression ex = (AssignmentExpression)expression;
+                ExpressionResult res2 = HandleAssignmentExpression(ex.Left, member, context, debug + 1);
+
+                Context subcontext = new Context() { Member = member };
+                if (res2.IsPrototype)
+                {
+                    subcontext.IsPrototype = true;
+                    subcontext.Member = res2.SingleMember;
+                }
+
+                ExpressionResult res3 = HandleAssignmentExpression(ex.Right, member, subcontext, debug + 1);
+
+                if (res3.IsFunctionDecl && res2.SingleMember != null)
+                {
+                    // since it was assigned a function, we can set its type to a function
+                    res2.SingleMember.Type = MemberType.Method;
+                }
+
+                // these are being assigned to these members
+                foreach (var mem in res2.Members)
+                    mem.AddAssignments(res3.Members);
+
+                res.AddMembers(res2.Members);
+            }
+            else if (expression is ClrIdentifier)
+            {
+                ClrIdentifier ex = (ClrIdentifier)expression;
+
+            }
+            else if (expression is NewExpression)
+            {
+                NewExpression ex = (NewExpression)expression;
+
+                ExpressionResult res3 = HandleAssignmentExpression(ex.Expression, member, context, debug + 1);
+
+                Member activeMember = res3.SingleMember;
+                if (activeMember.Constructor != null)
+                {
+                    activeMember = activeMember.Constructor;
+                }
+
+                int index = 0;
+                // a new expression is a constructor function call
+                foreach (var arg in ex.Arguments)
+                {
+                    ExpressionResult res2 = HandleAssignmentExpression(arg, member, context, debug + 1);
+
+                    //foreach (var mem in res3.Members)
+                    //{
+                        if (activeMember.ParametersIndex.ContainsKey(index))
+                        {
+                            string paramkey = activeMember.ParametersIndex[index];
+                            activeMember.Parameters[paramkey].AddAssignments(res2.Members);
+                        }
+                        index++;
+                   // }
+                }
+
+                //TODO check this is valid becasue a new needs to instance the result of this method
+                // for now we just pass the expression newed on
+                res.AddMembers(res3.Members);
             }
 
-            if (prototypefirst)
+            else if (expression is TernaryExpression)
             {
+                TernaryExpression ex = (TernaryExpression)expression;
+
+                // these are assignments to lets add it to current context variable
+
+                // lets parse this part in case it has important code
+                ExpressionResult res2 = HandleAssignmentExpression(ex.LeftExpression, member, context, debug + 1);
+
+                //Context subContext = new Context() { Name = "[Ternary]", Parent = context, Type = ContextType.Expression };
+                ExpressionResult res3 = HandleAssignmentExpression(ex.MiddleExpression, member, context, debug + 1);
+
+                //subContext.Assignments.Add();
+
+                ExpressionResult res4 = HandleAssignmentExpression(ex.RightExpression, member, context, debug + 1);
+
+                res.AddMembers(res3.Members);
+                res.AddMembers(res4.Members);
+            }
+            else if (expression is BinaryExpression)
+            {
+                BinaryExpression ex = (BinaryExpression)expression;
+
+                // these are assignments to lets add it to current context variable
+                ExpressionResult res2 = HandleAssignmentExpression(ex.LeftExpression, member, context, debug + 1);
+
+                ExpressionResult res3 = HandleAssignmentExpression(ex.RightExpression, member, context, debug + 1);
+
+                // binary always returns bool type
+                Member boolMember = new Member((AnoymCounter++).ToString(), member, MemberType.Value) { DataType = DataType.Bool, BasicData = false };
+                res.Members.Add(boolMember);
+            }
+            else if (expression is PropertyDeclarationExpression)
+            {
+                PropertyDeclarationExpression ex = (PropertyDeclarationExpression)expression;
+
+                if (ex.Mode == PropertyExpressionType.Data)
+                {
+                    ExpressionResult res2 = HandleAssignmentExpression(ex.Expression, member, context, debug + 1);
+
+                    res.IsFunctionDecl = res2.IsFunctionDecl;
+
+                    res.AddMembers(res2.Members);
+                }
+                else
+                {
+                    throw new InvalidOperationException("get/set not yet implemented");
+                }
+                // TODO get set
+
+                /*ExpressionResult res3 = HandleAssignmentExpression(ex.GetExpression, member, context);
+
+                ExpressionResult res4 = HandleAssignmentExpression(ex.SetExpression, member, context);*/
 
             }
-
-            name = ((Identifier)ex).Text;
-
-            if (name == "this")
+            else if (expression is FunctionExpression)
             {
-                info.isthis = true;
-                info.parent = currentclass;
+                FunctionExpression ex = (FunctionExpression)expression;
+
+                string functionName = ex.Name;
+
+                Member functionMember = null;
+
+                if (functionName == null)
+                {
+                    functionMember = anonymous[ex];
+                }
+                else
+                    functionMember = member.FindMember(functionName);
+                
+
+                HandleAssignmentStatement(ex.Statement, functionMember, debug + 1);
+
+                res.Members.Add(functionMember);
+            }
+            else if (expression is Indexer)
+            {
+                Indexer ex = (Indexer)expression;
+
+                ExpressionResult res2 = HandleAssignmentExpression(ex.Index, member, context, debug + 1);
+
+                res.Members.Add(context.Member);
+            }
+            else if (expression is UnaryExpression)
+            {
+                UnaryExpression ex = (UnaryExpression)expression;
+
+                ExpressionResult res2 = HandleAssignmentExpression(ex.Expression, member, context, debug + 1);
+
+                res.AddMembers(res2.Members);
+            }
+            else if (expression is Identifier)
+            {
+                Identifier ex = (Identifier)expression;
+
+                if (ex.Text == "null")
+                {
+                    // its a null type
+                    Member basicmember = new Member((AnoymCounter++).ToString(), member, MemberType.Value) { DataType = DataType.Null };
+                    basicmember.BasicData = null;
+
+                    res.Members.Add(basicmember);
+                }
+                else if (ex.Text == "prototype")
+                {
+                    res.IsPrototype = true;
+                }
+                else
+                {
+                    if (context.Member != null)
+                    {
+                        Member temp = context.Member.FindMember(ex.Text);
+
+                        if (temp != null)
+                        {
+                            res.Members.Add(temp);
+                        }
+                        else
+                        {
+                            // we create missing members every time at this step
+                            Member newMember = new Member(ex.Text, context.Member, MemberType.Member);
+                            context.Member.AddToClassMembers(newMember);
+
+                            res.Members.Add(newMember);
+                        }
+                    }
+                }
+
+            }
+            else if (expression is PropertyExpression)
+            {
+                PropertyExpression ex = (PropertyExpression)expression;
+            }
+            else if (expression is JsonExpression)
+            {
+                JsonExpression ex = (JsonExpression)expression;
+
+                // create a new anonymous class member. if its a prototype, we do a trick and swap with the assigned member
+                Member jsonMember = null;
+                if (context.IsPrototype)
+                    jsonMember = context.Member;
+                else
+                    jsonMember = anonymous[ex];
+
+                if (ex.Values.Count == 0)
+                {
+                    // an empty json body, do nothing
+                }
+                else
+                {
+                    foreach (var value in ex.Values)
+                    {
+                        if (value.Key == "constructor")
+                        {
+                            // special case, its a constructor
+                            ExpressionResult res2 = HandleAssignmentExpression(value.Value, member, context, debug + 1);
+
+                            if (res2.SingleMember != null && jsonMember != context.Member)
+                            {
+                                if (res2.SingleMember.Constructor != null)
+                                    jsonMember.Constructor = res2.SingleMember.Constructor;
+                                else
+                                    jsonMember.Constructor = res2.SingleMember;
+                            }
+                        }
+                        else
+                        {
+                            ExpressionResult res2 = HandleAssignmentExpression(value.Value, member, context, debug + 1);
+
+                            if (jsonMember != context.Member)
+                                if (res2.Members.Count == 0)
+                                {
+                                    // add a new empty member
+                                    Member classmember = new Member(value.Key, member, MemberType.Member);
+                                    jsonMember.AddToClassMembers(classmember);
+                                }
+                                else
+                                {
+                                    // it must have been added to a parent, remove it so we can read it with this name
+                                    //res2.SingleMember.Parent.Remove(res2.SingleMember);
+                                    res2.SingleMember.OverrideName = value.Key;
+                                    jsonMember.AddToClassMembers(res2.SingleMember);
+                                }
+                        }
+                    }
+                }
+
+                if (jsonMember != context.Member)
+                    res.Members.Add(jsonMember);
+            }
+            else if (expression is RegexpExpression)
+            {
+                RegexpExpression ex = (RegexpExpression)expression;
+
+                Member regexmember = new Member((AnoymCounter++).ToString(), member, MemberType.Regex);
+                regexmember.BasicData = ex.Regexp;
+                res.Members.Add(regexmember);
+
+            }
+            else if (expression is ValueExpression)
+            {
+                ValueExpression ex = (ValueExpression)expression;
+                Member basicmember = new Member((AnoymCounter++).ToString(), member, MemberType.Value);
+                basicmember.BasicData = ex.Value;
+
+                switch (ex.TypeCode)
+                {
+                    case TypeCode.Double:
+                        basicmember.DataType = DataType.Float;
+                        break;
+                    case TypeCode.String:
+                        basicmember.DataType = DataType.String;
+                        break;
+                    case TypeCode.Boolean:
+                        basicmember.DataType = DataType.Bool;
+                        break;
+                    case TypeCode.Byte:
+                        basicmember.DataType = DataType.Int;
+                        break;
+                    case TypeCode.Char:
+                        basicmember.DataType = DataType.String;
+                        break;
+                    case TypeCode.DateTime:
+                        basicmember.DataType = DataType.Date;
+                        break;
+                    case TypeCode.Decimal:
+                        basicmember.DataType = DataType.Float;
+                        break;
+                    case TypeCode.Int16:
+                        basicmember.DataType = DataType.Int;
+                        break;
+                    case TypeCode.Int32:
+                        basicmember.DataType = DataType.Int;
+                        break;
+                    case TypeCode.Int64:
+                        basicmember.DataType = DataType.Int;
+                        break;
+                    case TypeCode.Single:
+                        basicmember.DataType = DataType.Float;
+                        break;
+                    default:
+                        throw new InvalidOperationException();
+                }
+
+                res.Members.Add(basicmember);
+
+            }
+            else if (expression == null)
+            {
+                // do nothing
             }
             else
             {
-
-                values.Add(name);
-                values.Reverse();
-
-                if (classes.ContainsKey(string.Join(".", values.ToArray())))
-                    info.parent = classes[string.Join(".", values.ToArray())];
+                // not found, lets try to handle it as a statement
+                HandleAssignmentStatement(expression, member, debug + 1);
             }
 
-            return info;
+            return res;
         }
-
-        public static void MakeFullname(Member parent, Member newclass)
-        {
-            if (parent.fullname != "")
-                newclass.fullname = string.Format("{0}.{1}", parent.fullname, newclass.name);
-            else
-                newclass.fullname = newclass.name;
-        }*/
+        #endregion
     }
 }
